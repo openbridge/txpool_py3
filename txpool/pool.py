@@ -26,7 +26,7 @@ __all__ = ['Pool', 'PoolError', 'PoolTimeout', 'cpu_count']
 
 import os
 import sys
-import cPickle as pickle
+import pickle
 from collections import deque
 from logging import INFO, ERROR
 from multiprocessing import cpu_count
@@ -202,10 +202,10 @@ class Job(object):
         self._log_lines.append(line)
 
     def get_log(self):
-        return '\n'.join(self._log_lines or ())
+        return b'\n'.join(self._log_lines or ())
 
     def __repr__(self):
-        if isinstance(self.call, basestring):
+        if isinstance(self.call, str):
             name = self.call
         else:
             name = repr(self.call)
@@ -215,7 +215,7 @@ class Job(object):
                 for arg in self.args:
                     yield repr(arg)
             if self.kwargs:
-                for item in self.kwargs.iteritems():
+                for item in self.kwargs.items():
                     yield '%s=%r' % item
 
         return ('<%s object at %#x: %s(%s)>' %
@@ -258,7 +258,7 @@ class PoolManager(object):
 
         self.size = size
 
-        for _ in xrange(size):
+        for _ in range(size):
             self.start_worker()
 
     def is_ready(self):
@@ -348,7 +348,7 @@ class PoolManager(object):
 
         if job and not job.deferred.called:
             # Start the errback chain on the job's deferred.
-            job.deferred.errback(PoolError(msg + '\n' + job.get_log()))
+            job.deferred.errback(PoolError(msg.encode('utf8') + b'\n' + job.get_log()))
 
         if (not replace_worker) and self.is_closed():
             while self.deferreds_on_closure:
@@ -367,7 +367,8 @@ class PoolManager(object):
             job.deferred.callback(result)
 
     def on_worker_log(self, worker, job, line):
-        self.log.debug('Pool "%s" [%d]: %s' % (self.name, worker.pid, line))
+        self.log.debug(
+            'Pool "%s" [%d]: %s' % (self.name, worker.pid, line.decode('utf8')))
         if job:
             job.log(line)
 
@@ -490,7 +491,7 @@ class WorkerProtocol(NetstringReceiver, ProcessProtocol):
         self.dataReceived(data)
 
     def stringReceived(self, payload):
-        # Windows pipes use '\r\n', and both pickle and cPickle
+        # Windows pipes use '\r\n', and both pickle and pickle
         # can have trouble with that when unpickling (you may get
         # an 'insecure pickle string' message).
         if os.linesep != '\n':
@@ -535,7 +536,7 @@ class Liner(object):
 
     def __init__(self, call):
         self.call = call
-        self.remains = ''
+        self.remains = b''
 
     def add(self, text):
         lines = (self.remains + text).splitlines()
@@ -545,7 +546,7 @@ class Liner(object):
             self.call(line)
 
     def finish(self):
-        remains, self.remains = self.remains, ''
+        remains, self.remains = self.remains, b''
         if remains:
             self.call(remains)
 

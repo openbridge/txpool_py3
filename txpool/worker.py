@@ -22,8 +22,9 @@
 # SOFTWARE.
 
 import os
+import pickle
 import sys
-import cPickle as pickle
+
 
 try:
     import fcntl
@@ -119,10 +120,10 @@ def main():
             break
 
         if obj is None:
-            print 'Stopping'
+            print('Stopping')
             break
 
-        if isinstance(obj, basestring):
+        if isinstance(obj, str):
             call = import_callable(obj)
         elif callable(obj):
             call = obj
@@ -130,7 +131,7 @@ def main():
             args, kw = obj
             result = call(*(args or ()), **(kw or {}))
             pickled = pickle.dumps(result)
-            out_safe.write('%d:%s,' % (len(pickled), pickled))
+            out_safe.write(b'%d:%s,' % (len(pickled), pickled))
             out_safe.flush()
 
 if __name__ == '__main__':

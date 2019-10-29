@@ -10,7 +10,7 @@ def read(relpath):
 
 setup(
     name='txpool',
-    version='1.0.2',
+    version='2.0.0',
     description='A persistent process pool in Python for Twisted',
     long_description=read('README.rst'),
     license='MIT',
@@ -18,10 +18,10 @@ setup(
     author_email='escattone@gmail.com',
     url='https://github.com/escattone/txpool',
     packages=['txpool'],
-    install_requires=['twisted>=12'],
+    install_requires=['twisted>=12', 'mock'],
     classifiers=[
-        'Programming Language :: Python :: 2.7',
-        'Programming Language :: Python :: 2 :: Only',
+        'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3 :: Only',
         'Development Status :: 4 - Beta',
         'Natural Language :: English',
         'Framework :: Twisted',
