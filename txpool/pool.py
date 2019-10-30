@@ -56,11 +56,6 @@ class Pool(object):
            the result of cpu_count() (see link below) will be used, or
            if that fails, the default size of two will be used
 
-    init_call,
-    init_args:  an initial callable and its arguments that will be
-                called once as "init_call(*init_args)" within every
-                process after it has started
-
     log:  a python standard logger object or None
 
     name:  the name of the pool, or if None, the result of "id(self)"
@@ -68,10 +63,9 @@ class Pool(object):
 
     (http://docs.python.org/2.7/library/multiprocessing.html#miscellaneous)
     """
-    def __init__(self, size=None, init_call=None, init_args=None, log=None,
-                 name=None):
-        self._manager = PoolManager(self, size=size, init_call=init_call,
-                                    init_args=init_args, log=log, name=name)
+    def __init__(self, size=None, log=None, name=None, run_once=False):
+        self._manager = PoolManager(
+            self, size=size, log=log, name=name, run_once=run_once)
 
     @property
     def size(self):
@@ -222,30 +216,21 @@ class Job(object):
                 (self.__class__.__name__, id(self), name, ', '.join(args())))
 
 
-class Initializer(Job):
-    """
-    A Job used to initialize a worker process.
-    """
-
-    __slots__ = ()
-
-
 class PoolManager(object):
     """
     The private "guts" of the Pool.
     """
-    def __init__(self, pool, size=None, init_call=None, init_args=None,
-                 log=None, name=None):
+    def __init__(self, pool, size=None, log=None, name=None, run_once=False):
         self.pool = pool
         self.workers = set()
         self.closing = False
         self.job_queue = deque()
-        self.init_call = init_call
-        self.init_args = init_args
         self.log = MaybeLogger(log)
         self.name = name or id(self)
         self.deferreds_on_ready = deque()
         self.deferreds_on_closure = deque()
+        self.workers_waiting = deque()
+        self.run_once = run_once
 
         if size is None:
             try:
@@ -265,7 +250,8 @@ class PoolManager(object):
         return len(self.workers) >= self.size
 
     def is_closed(self):
-        return self.closing and not (self.workers or self.job_queue)
+        return self.closing and not (
+            self.workers or self.job_queue or self.workers_waiting)
 
     def on_ready(self, timeout=None):
         if self.closing:
@@ -307,20 +293,7 @@ class PoolManager(object):
 
         self.workers.add(worker)
 
-        if self.init_call:
-            job = Initializer(self.init_call, self.init_args)
-
-            def init_success(result):
-                self.log.info('Pool "%s": process %d initialized.',
-                              self.name, worker.pid)
-
-            def init_failure(failure):
-                self.log.info('Pool "%s": process %d failed to initialize.',
-                              self.name, worker.pid)
-
-            job.deferred.addCallbacks(init_success, init_failure)
-        else:
-            job = None
+        job = None
 
         self.employ(worker, job)
 
@@ -336,11 +309,12 @@ class PoolManager(object):
                         (job and ('running %r' % job)) or 'idle'))
 
         self.log.log(ERROR if exit_code else INFO, msg)
+        if worker in self.workers:
+            self.workers.remove(worker)
+        elif worker in self.workers_waiting:
+            self.workers_waiting.remove(worker)            
 
-        self.workers.remove(worker)
-
-        replace_worker = not (isinstance(job, Initializer) or
-                              (self.closing and not self.job_queue))
+        replace_worker = not (self.closing and not self.job_queue)
 
         if replace_worker:
             # Start a replacement process.
@@ -360,7 +334,13 @@ class PoolManager(object):
         self.log.debug('Pool "%s" [%d]: %r: %r' %
                        (self.name, worker.pid, job, result))
 
-        self.employ(worker)
+        if self.run_once and worker.job is None:
+            if worker in self.workers:
+                self.workers.remove(worker)
+                self.workers_waiting.append(worker)
+            worker.retire()
+        else:
+            self.employ(worker)
 
         # Start the callback chain on the job's deferred.
         if job and not job.deferred.called:

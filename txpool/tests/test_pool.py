@@ -28,6 +28,7 @@ import os
 import random
 import re
 import txpool.pool
+from twisted.internet import task, reactor
 from twisted.internet.defer import gatherResults, CancelledError, inlineCallbacks
 from twisted.trial import unittest
 from txpool import Pool, cpu_count
@@ -68,7 +69,7 @@ class PoolTestCase(unittest.TestCase):
             result = yield pool.apply_async('math.sqrt', (-1,), timeout=5)
         except Exception as e:
             result = e
-        assert isinstance(result, PoolError)
+        assert isinstance(result, ValueError)
 
         try:
             result = yield pool.apply_async(os.path.isdir, directory, timeout=5)
@@ -92,8 +93,7 @@ class PoolTestCase(unittest.TestCase):
         log.addHandler(logging.FileHandler(filename, 'w'))
         log.setLevel(logging.DEBUG)
 
-        pool = Pool(size=3, init_call='math.sqrt', init_args=(81,), log=log,
-                    name='test2')
+        pool = Pool(size=3, log=log, name='test2')
 
         assert pool.size == 3
         assert pool.name == 'test2'
@@ -120,23 +120,18 @@ class PoolTestCase(unittest.TestCase):
             log_text = f.read()
 
         pat1 = r'Pool "test2": process \d+ started\.'
-        pat2 = r'Pool "test2": process \d+ initialized\.'
-        pat3 = (r'Pool "test2" \[\d+\]: <Initializer object '
-                'at 0x[0-9a-f]+: math\.sqrt\(81\)>: 9\.0')
-        pat4 = (r'Pool "test2" \[\d+\]: <Job object '
+        pat2 = (r'Pool "test2" \[\d+\]: <Job object '
                 'at 0x[0-9a-f]+: math\.factorial\(9\)>: 362880')
-        pat5 = r'Pool "test2": closing process \d+\.'
-        pat6 = r'Pool "test2" \[\d+\]: Stopping'
-        pat7 = (r'Pool "test2": process \d+ ended '
+        pat3 = r'Pool "test2": closing process \d+\.'
+        pat4 = r'Pool "test2" \[\d+\]: Stopping'
+        pat5 = (r'Pool "test2": process \d+ ended '
                 '\(exit-code=0, signal=None\) while idle\.')
 
         assert len(re.findall(pat1, log_text)) == 3
-        assert len(re.findall(pat2, log_text)) == 3
+        assert len(re.findall(pat2, log_text)) == 1
         assert len(re.findall(pat3, log_text)) == 3
-        assert len(re.findall(pat4, log_text)) == 1
+        assert len(re.findall(pat4, log_text)) == 3
         assert len(re.findall(pat5, log_text)) == 3
-        assert len(re.findall(pat6, log_text)) == 3
-        assert len(re.findall(pat7, log_text)) == 3
 
     @inlineCallbacks
     def test_pool_3(self):
@@ -206,7 +201,7 @@ class PoolTestCase(unittest.TestCase):
                 result = yield d
             except Exception as e:
                 result = e
-            assert isinstance(result, PoolError)
+            assert isinstance(result, FileNotFoundError)
 
         try:
             result = yield pool.close(timeout=5)
@@ -253,7 +248,7 @@ class PoolTestCase(unittest.TestCase):
             elif arg >= 0:
                 assert result == math.factorial(arg)
             else:
-                assert isinstance(result, PoolError)
+                assert isinstance(result, ValueError)
 
         try:
             result = yield pool.apply_async('time.sleep', (3,), timeout=1)
@@ -367,42 +362,8 @@ class PoolTestCase(unittest.TestCase):
 
     @inlineCallbacks
     def test_pool_9(self):
-
-        pool = Pool(name='test9', init_call='math.sqrt', init_args=(-1,))
-
-        assert pool.name == 'test9'
-        assert pool.size == cpu_count()
-
-        try:
-            result = yield pool.on_ready(timeout=5)
-        except Exception as e:
-            result = e
-        assert result is pool
-        assert pool.get_number_of_workers() == pool.size
-
-        # This will timeout as we haven't called "close".
-        try:
-            result = yield pool.on_closure(timeout=2)
-        except Exception as e:
-            result = e
-            assert isinstance(result, PoolTimeout)
-
-        # This will timeout.  Since the init_call's failed, the pool will
-        # collapse (all of the processes will end due to an initialization
-        # error and will not be replaced), and will never fire "on_ready"
-        # again.
-        try:
-            result = yield pool.on_ready(timeout=2)
-        except Exception as e:
-            result = e
-        assert isinstance(result, PoolTimeout)
-        assert pool.get_number_of_workers() == 0
-
-
-    @inlineCallbacks
-    def test_pool_10(self):
         with mock.patch('txpool.pool.cpu_count', side_effect=NotImplementedError):
-            pool = Pool(name='test10')
+            pool = Pool(name='test9')
             assert pool.size == txpool.pool.DEFAULT_POOL_SIZE
 
             try:
@@ -413,3 +374,83 @@ class PoolTestCase(unittest.TestCase):
             assert pool.get_number_of_workers() == pool.size
 
             yield pool.close()
+
+    @inlineCallbacks
+    def test_error_raised(self):
+        pool = Pool(name='test1')
+
+        try:
+            result = yield pool.on_ready(timeout=5)
+        except Exception as e:
+            result = e
+        self.assertEqual(result, pool)
+
+        try:
+            result = yield pool.apply_async('math.sqrt', (-1,), timeout=5)
+        except Exception as e:
+            result = e
+
+        assert isinstance(result, ValueError)
+
+        try:
+            result = yield pool.close(timeout=5)
+        except Exception as e:
+            result = e
+        assert result is pool
+        assert pool.get_number_of_workers() == 0
+
+    @inlineCallbacks
+    def test_run_once(self):
+        pool = Pool(name='test1', run_once=True)
+
+        try:
+            result = yield pool.on_ready(timeout=5)
+        except Exception as e:
+            result = e
+        self.assertEqual(result, pool)
+        self.assertEqual(pool.get_number_of_workers(), 16)
+        workers1 = pool._manager.workers.copy()
+
+        # Verify that running a job successfully would create a new worker
+        try:
+            result = yield pool.apply_async('math.sqrt', (1,), timeout=5)
+        except Exception as e:
+            result = e            
+        self.assertEqual(result, 1.0)
+        self.assertEqual(pool.get_number_of_workers(), 15)
+        self.assertEqual(len(pool._manager.workers_waiting), 1)
+        # Take a short break to let old worker process terminate
+        yield task.deferLater(reactor, 1.0, lambda: None)
+        
+        self.assertEqual(pool.get_number_of_workers(), 16)
+        self.assertEqual(len(pool._manager.workers_waiting), 0)
+        workers2 = pool._manager.workers.copy()
+
+        self.assertEqual(len(workers1.difference(workers2)), 1)
+
+        # Running into error should create a new worker too
+        try:
+            result = yield pool.apply_async('math.sqrt', (-1,), timeout=5)
+        except Exception as e:
+            result = e            
+        self.assertIsInstance(result, ValueError)
+        self.assertEqual(pool.get_number_of_workers(), 15)
+        self.assertEqual(len(pool._manager.workers_waiting), 1)
+        # Take a short break to let old worker process terminate
+        yield task.deferLater(reactor, 1.0, lambda: None)
+        
+        self.assertEqual(pool.get_number_of_workers(), 16)
+        self.assertEqual(len(pool._manager.workers_waiting), 0)
+        workers3 = pool._manager.workers.copy()
+
+        self.assertEqual(len(workers2.difference(workers3)), 1)
+        self.assertEqual(len(workers1.difference(workers3)), 2)
+
+        # Ok, close the pool
+        try:
+            result = yield pool.close(timeout=5)
+        except Exception as e:
+            result = e
+        self.assertEqual(result, pool)
+        self.assertEqual(pool.get_number_of_workers(), 0)
+

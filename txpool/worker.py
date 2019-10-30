@@ -129,10 +129,24 @@ def main():
             call = obj
         else:
             args, kw = obj
-            result = call(*(args or ()), **(kw or {}))
-            pickled = pickle.dumps(result)
+            try:
+                result = call(*(args or ()), **(kw or {}))
+                pickled = pickle.dumps(result)
+                out_safe.write(b'%d:%s,' % (len(pickled), pickled))
+                out_safe.flush()
+                continue
+            except Exception as e:
+                result = e
+
+            # This would only run on error. First return error object,
+            # then interrupt main loop.
+            try:
+                pickled = pickle.dumps(result)
+            except Exception:
+                pickled = pickle.dumps(Exception(str(result)))
             out_safe.write(b'%d:%s,' % (len(pickled), pickled))
             out_safe.flush()
+
 
 if __name__ == '__main__':
     main()
