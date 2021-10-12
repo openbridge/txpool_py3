@@ -400,8 +400,8 @@ class PoolTestCase(unittest.TestCase):
         assert pool.get_number_of_workers() == 0
 
     @inlineCallbacks
-    def test_run_once(self):
-        pool = Pool(name='test1', run_once=True)
+    def test_max_calls(self):
+        pool = Pool(name='test1', max_calls=1)
 
         try:
             result = yield pool.on_ready(timeout=5)

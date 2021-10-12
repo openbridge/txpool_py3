@@ -63,9 +63,9 @@ class Pool(object):
 
     (http://docs.python.org/2.7/library/multiprocessing.html#miscellaneous)
     """
-    def __init__(self, size=None, log=None, name=None, run_once=False):
+    def __init__(self, size=None, log=None, name=None, max_calls=None):
         self._manager = PoolManager(
-            self, size=size, log=log, name=name, run_once=run_once)
+            self, size=size, log=log, name=name, max_calls=max_calls)
 
     @property
     def size(self):
@@ -220,7 +220,7 @@ class PoolManager(object):
     """
     The private "guts" of the Pool.
     """
-    def __init__(self, pool, size=None, log=None, name=None, run_once=False):
+    def __init__(self, pool, size=None, log=None, name=None, max_calls=None):
         self.pool = pool
         self.workers = set()
         self.closing = False
@@ -230,7 +230,7 @@ class PoolManager(object):
         self.deferreds_on_ready = deque()
         self.deferreds_on_closure = deque()
         self.workers_waiting = deque()
-        self.run_once = run_once
+        self.max_calls = max_calls
 
         if size is None:
             try:
@@ -334,11 +334,15 @@ class PoolManager(object):
         self.log.debug('Pool "%s" [%d]: %r: %r' %
                        (self.name, worker.pid, job, result))
 
-        if self.run_once and worker.job is None:
-            if worker in self.workers:
-                self.workers.remove(worker)
-                self.workers_waiting.append(worker)
-            worker.retire()
+        if self.max_calls and worker.job is None:
+            worker.calls_processed += 1
+            if worker.calls_processed >= self.max_calls:
+                if worker in self.workers:
+                    self.workers.remove(worker)
+                    self.workers_waiting.append(worker)
+                worker.retire()
+            else:
+                self.employ(worker)
         else:
             self.employ(worker)
 
@@ -402,6 +406,7 @@ class Worker(object):
         self.callback_on_start = on_start
         self.callback_on_result = on_result
         self.protocol = WorkerProtocol(self)
+        self.calls_processed = 0
 
         def log_line(line):
             if self.callback_on_log:
