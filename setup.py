@@ -10,7 +10,7 @@ def read(relpath):
 
 setup(
     name='txpool',
-    version='2.0.2',
+    version='2.0.3',
     description='A persistent process pool in Python for Twisted',
     long_description=read('README.rst'),
     license='MIT',

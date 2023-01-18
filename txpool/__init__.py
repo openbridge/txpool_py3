@@ -2,4 +2,4 @@
 from txpool.pool import cpu_count, Pool, PoolError, PoolTimeout
 
 
-__version__ = '2.0.0'
+__version__ = '2.0.3'
